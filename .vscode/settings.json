@@ -1,0 +1,12 @@
+{
+  "yaml.schemas": {
+    "kubernetes://schema/apps/v1@deployment+v1@service": "file:///e%3A/demo-kubernetes-components/mongo.yaml"
+  },
+  "azureFunctions.deploySubpath": ".",
+  "azureFunctions.postDeployTask": "npm install (functions)",
+  "azureFunctions.projectLanguage": "TypeScript",
+  "azureFunctions.projectRuntime": "~4",
+  "debug.internalConsoleOptions": "neverOpen",
+  "azureFunctions.projectLanguageModel": 4,
+  "azureFunctions.preDeployTask": "npm prune (functions)"
+}
