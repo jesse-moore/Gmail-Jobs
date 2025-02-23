@@ -1,10 +1,10 @@
 import { TableEntity } from '@azure/data-tables';
-import { RuleType, GroupOperator, Period, PeriodRuleOperator, RuleOperator, TableEntityProperty } from '.';
-import { randomUUID, UUID } from 'crypto';
+import { GroupOperator, Period, PeriodRuleOperator, RuleOperator, RuleType, TableEntityProperty } from '.';
 
 export class GmailJobRuleBase implements TableEntity {
   partitionKey: string;
   rowKey: string;
+  jobId: TableEntityProperty<string>;
   groupId: TableEntityProperty<string | null>;
   type: string;
   order: number;
@@ -14,6 +14,12 @@ export class GmailJobRuleBase implements TableEntity {
   constructor(data: Partial<GmailJobRuleBase>) {
     this.partitionKey = data?.partitionKey;
     this.rowKey = data?.rowKey;
+    this.jobId = data?.jobId
+      ? {
+          type: 'Guid',
+          value: data.jobId.value,
+        }
+      : null;
     this.groupId = data?.groupId
       ? {
           type: 'Guid',
@@ -39,6 +45,10 @@ export class GmailJobRuleBase implements TableEntity {
       order: {
         type: 'Int32',
         value: this.order,
+      },
+      jobId: {
+        type: 'Guid',
+        value: this.jobId.value,
       },
     };
     if (this.groupId) {

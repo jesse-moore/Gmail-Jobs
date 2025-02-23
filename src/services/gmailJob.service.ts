@@ -4,68 +4,36 @@ import { GmailJobDTO } from '../dtos/GmailJobDTO';
 import { GmailJobRuleBaseDTO, GmailJobRuleDTO, GmailJobRuleGroupDTO } from '../dtos/GmailJobFilterDTO';
 import { GmailJob, GmailJobRule, GmailJobRuleBase, GmailJobRuleGroup, RuleOperator, RuleType } from '../models';
 import { mapper } from './automapper.service';
+import { GmailJobLog } from '../models/GmailJobLog';
 
-export class JobFilterService {
+export class GmailJobService {
   constructor() {}
 
-  static getJobsByUserId = async (userId: string): Promise<GmailJobDTO[]> => {
-    const jobs = (await this.getJobEntities(userId)).filter(x => x.isActive);
-    const jobIds = jobs.map(x => x.rowKey);
-    const filters = (await this.getFilterEntities(jobIds)).filter(x => x.isActive);
+  static async getJobsByUserId(userId: string): Promise<GmailJobDTO[]> {
+    const jobs = (await this.getJobEntities(userId)).filter(job => job.isActive);
 
-    const filtersByJob: Record<string, GmailJobRuleBaseDTO[]> = {};
-    for await (const filter of filters) {
-      filtersByJob[filter.partitionKey] = filtersByJob[filter.partitionKey] || [];
-      let filterDTO: GmailJobRuleBaseDTO;
-      if (filter.type === RuleType.Group) {
-        filterDTO = mapper.map(filter as TableEntityResult<GmailJobRuleGroup>, GmailJobRuleGroup, GmailJobRuleGroupDTO);
-      } else {
-        filterDTO = mapper.map(filter as TableEntityResult<GmailJobRule<RuleOperator>>, GmailJobRule, GmailJobRuleDTO);
-      }
-      filtersByJob[filter.partitionKey].push(filterDTO);
-    }
+    const filters = (await this.getFilterEntities(`PartitionKey eq '${userId}'`)).filter(filter => filter.isActive);
+    const filtersByJob = this.groupAndMapFilters(filters);
 
     const jobDtos: GmailJobDTO[] = mapper.mapArray(jobs, GmailJob, GmailJobDTO);
-    jobDtos.forEach(job => {
-      const jobFilters = (filtersByJob[job.id] ?? []).sort((a, b) => {
-        if (a.type === RuleType.Group && b.type === RuleType.Rule) return -1;
-        if (a.type === RuleType.Rule && b.type === RuleType.Group) return 1;
-        return a.order - b.order;
-      });
-
+    for (const job of jobDtos) {
+      const jobFilters = (filtersByJob[job.id] ?? []).sort(this.ruleSorter);
       job.rules = this.nestRules(jobFilters);
-    });
-
+    }
     return jobDtos;
-  };
+  }
 
-  static getJobById = async (userId: string, jobId: string): Promise<GmailJobDTO> => {
+  static async getJobById(userId: string, jobId: string): Promise<GmailJobDTO> {
     const job = await this.getJobEntity(userId, jobId);
     if (!job || !job.isActive) return null;
-    const filters = await this.getFilterEntities([job.rowKey]);
 
-    const jobRules: GmailJobRuleBaseDTO[] = [];
-    for await (const filter of filters) {
-      if (!filter.isActive) continue;
-      let filterDTO: GmailJobRuleBaseDTO;
-      if (filter.type === RuleType.Group) {
-        filterDTO = mapper.map(filter as TableEntityResult<GmailJobRuleGroup>, GmailJobRuleGroup, GmailJobRuleGroupDTO);
-      } else {
-        filterDTO = mapper.map(filter as TableEntityResult<GmailJobRule<RuleOperator>>, GmailJobRule, GmailJobRuleDTO);
-      }
-      jobRules.push(filterDTO);
-    }
+    const filters = await this.getFilterEntities(`PartitionKey eq '${userId}' AND jobId eq guid'${jobId}'`);
+    const jobRules: GmailJobRuleBaseDTO[] = filters.filter(filter => filter.isActive).map(this.mapFilter);
 
     const jobDto: GmailJobDTO = mapper.map(job, GmailJob, GmailJobDTO);
-    const jobFilters = jobRules.sort((a, b) => {
-      if (a.type === RuleType.Group && b.type === RuleType.Rule) return -1;
-      if (a.type === RuleType.Rule && b.type === RuleType.Group) return 1;
-      return a.order - b.order;
-    });
-    jobDto.rules = this.nestRules(jobFilters);
-
+    jobDto.rules = this.nestRules(jobRules.sort(this.ruleSorter));
     return jobDto;
-  };
+  }
 
   static createJob = async (userId: string, job: GmailJobDTO): Promise<{ error: string; data: GmailJobDTO }> => {
     const result = { error: null, data: null };
@@ -94,7 +62,7 @@ export class JobFilterService {
     createJobEntity.rowKey = randomUUID();
     createJobEntity.isActive = true;
 
-    const flattenedJobRules = JobFilterService.flattenRules(job.rules);
+    const flattenedJobRules = GmailJobService.flattenRules(job.rules);
     const createRuleEntities: GmailJobRuleBase[] = [];
     for (let rule of flattenedJobRules) {
       let ruleEntity: GmailJobRuleBase;
@@ -103,7 +71,8 @@ export class JobFilterService {
       } else {
         ruleEntity = mapper.map(rule, GmailJobRuleDTO, GmailJobRule);
       }
-      ruleEntity.partitionKey = createJobEntity.rowKey;
+      ruleEntity.partitionKey = userId;
+      ruleEntity.jobId = { type: 'Guid', value: createJobEntity.rowKey };
       ruleEntity.isActive = true;
       createRuleEntities.push(ruleEntity);
     }
@@ -145,7 +114,7 @@ export class JobFilterService {
     const updateJobEntity = mapper.map(job, GmailJobDTO, GmailJob);
     updateJobEntity.isActive = true;
 
-    const flattenedJobRules = JobFilterService.flattenRules(job.rules);
+    const flattenedJobRules = GmailJobService.flattenRules(job.rules);
     const updateRuleEntities: GmailJobRuleBase[] = [];
     for (let rule of flattenedJobRules) {
       let ruleEntity: GmailJobRuleBase;
@@ -158,7 +127,7 @@ export class JobFilterService {
       updateRuleEntities.push(ruleEntity);
     }
 
-    var existingJobRules = await this.getFilterEntities([updateJobEntity.rowKey]);
+    var existingJobRules = await this.getFilterEntities(`PartitionKey eq '${userId}' AND jobId eq guid'${existingJob.rowKey}'`);
     const existingRuleIds = existingJobRules.map(x => x.rowKey);
     const createRules = updateRuleEntities.filter(x => !existingRuleIds.includes(x.rowKey));
     const updateRules = updateRuleEntities.filter(x => existingRuleIds.includes(x.rowKey));
@@ -167,18 +136,18 @@ export class JobFilterService {
     const gmailJobsClient = await this.getJobsTableClient();
     const gmailFiltersClient = await this.getFiltersTableClient();
 
-    await gmailJobsClient.updateEntity({ ...updateJobEntity.toEntity(), partitionKey: userId }, "Replace");
+    await gmailJobsClient.updateEntity({ ...updateJobEntity.toEntity(), partitionKey: userId }, 'Replace');
     for (let rule of createRules) {
-      await gmailFiltersClient.createEntity({...rule.toEntity(), partitionKey: updateJobEntity.rowKey});
+      await gmailFiltersClient.createEntity({ ...rule.toEntity(), partitionKey: userId });
     }
-    
+
     for (let rule of updateRules) {
-      await gmailFiltersClient.updateEntity({...rule.toEntity(), partitionKey: updateJobEntity.rowKey}, "Replace");
+      await gmailFiltersClient.updateEntity({ ...rule.toEntity(), partitionKey: userId }, 'Replace');
     }
-    
+
     for (let rule of deleteRules) {
       rule.isActive = false;
-      await gmailFiltersClient.updateEntity({ ...rule.toEntity(), partitionKey: updateJobEntity.rowKey }, "Replace");
+      await gmailFiltersClient.updateEntity({ ...rule.toEntity(), partitionKey: userId }, 'Replace');
     }
 
     result.data = await this.getJobById(userId, updateJobEntity.rowKey);
@@ -197,15 +166,20 @@ export class JobFilterService {
       return result;
     }
 
-    var jobRuleEntities = await this.getFilterEntities([jobEntity.rowKey]);
+    var jobRuleEntities = await this.getFilterEntities(`PartitionKey eq '${userId}' AND jobId eq guid'${jobId}'`);
 
-    await gmailJobsClient.updateEntity({ ...jobEntity, isActive: false }, "Replace");
+    await gmailJobsClient.updateEntity({ ...jobEntity, isActive: false }, 'Replace');
     for (let rule of jobRuleEntities) {
-      await gmailFiltersClient.updateEntity({ ...rule, isActive: false }, "Replace");
+      await gmailFiltersClient.updateEntity({ ...rule, isActive: false }, 'Replace');
     }
 
     result.data = await this.getJobById(userId, jobEntity.rowKey);
     return result;
+  };
+
+  public static storeJobResults = async (jobLog: GmailJobLog): Promise<void> => {
+    const gmailJobLogsClient = await this.getJobLogsTableClient();
+    await gmailJobLogsClient.createEntity(jobLog.toEntity());
   };
 
   private static getJobsTableClient = async () => {
@@ -218,6 +192,13 @@ export class JobFilterService {
   private static getFiltersTableClient = async () => {
     const connectionString = 'UseDevelopmentStorage=true';
     const gmailFiltersClient = TableClient.fromConnectionString(connectionString, 'gmailFilters');
+    await gmailFiltersClient.createTable();
+    return gmailFiltersClient;
+  };
+
+  private static getJobLogsTableClient = async () => {
+    const connectionString = 'UseDevelopmentStorage=true';
+    const gmailFiltersClient = TableClient.fromConnectionString(connectionString, 'gmailJobLogs');
     await gmailFiltersClient.createTable();
     return gmailFiltersClient;
   };
@@ -242,10 +223,10 @@ export class JobFilterService {
     return new GmailJob(jobRequest);
   };
 
-  private static getFilterEntities = async (jobIds: string[]): Promise<GmailJobRuleBase[]> => {
+  private static getFilterEntities = async (query: string): Promise<GmailJobRuleBase[]> => {
     const gmailFiltersClient = await this.getFiltersTableClient();
     const filtersRequest = gmailFiltersClient.listEntities<GmailJobRuleBase>({
-      queryOptions: { filter: `${jobIds.map(x => `PartitionKey eq '${x}'`).join(' or ')}` },
+      queryOptions: { filter: query },
     });
 
     const filters: GmailJobRuleBase[] = [];
@@ -260,7 +241,7 @@ export class JobFilterService {
     return filters;
   };
 
-  private static nestRules = (jobRules: GmailJobRuleBaseDTO[]): GmailJobRuleBaseDTO[] => {
+  public static nestRules = (jobRules: GmailJobRuleBaseDTO[]): GmailJobRuleBaseDTO[] => {
     if (!jobRules.find(x => x.type === RuleType.Group)) return jobRules;
 
     const rootGroup = jobRules.find(x => x.type === RuleType.Group && !x.groupId) as GmailJobRuleGroupDTO;
@@ -302,11 +283,35 @@ export class JobFilterService {
       x.id = x.id ?? randomUUID();
       if (x.type === RuleType.Group) {
         x.groupId = depth === 0 ? null : groupId;
-        return [x, ...JobFilterService.flattenRules((x as GmailJobRuleGroupDTO).rules, depth, x.id)];
+        return [x, ...GmailJobService.flattenRules((x as GmailJobRuleGroupDTO).rules, depth, x.id)];
       }
       x.groupId = groupId;
       return x;
     });
     return result;
   };
+
+  private static groupAndMapFilters(filters: TableEntityResult<any>[]): Record<string, GmailJobRuleBaseDTO[]> {
+    return filters.reduce((acc, filter) => {
+      const dto = this.mapFilter(filter);
+      if (!acc[filter.jobId.value]) {
+        acc[filter.jobId.value] = [];
+      }
+      acc[filter.jobId.value].push(dto);
+      return acc;
+    }, {} as Record<string, GmailJobRuleBaseDTO[]>);
+  }
+
+  private static mapFilter(filter: TableEntityResult<any>): GmailJobRuleBaseDTO {
+    if (filter.type === RuleType.Group) {
+      return mapper.map(filter as TableEntityResult<GmailJobRuleGroup>, GmailJobRuleGroup, GmailJobRuleGroupDTO);
+    }
+    return mapper.map(filter as TableEntityResult<GmailJobRule<RuleOperator>>, GmailJobRule, GmailJobRuleDTO);
+  }
+
+  private static ruleSorter(a: GmailJobRuleBaseDTO, b: GmailJobRuleBaseDTO): number {
+    if (a.type === RuleType.Group && b.type === RuleType.Rule) return -1;
+    if (a.type === RuleType.Rule && b.type === RuleType.Group) return 1;
+    return a.order - b.order;
+  }
 }

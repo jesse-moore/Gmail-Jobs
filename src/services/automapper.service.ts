@@ -33,7 +33,7 @@ createMap(
   // prettier-ignore
   forMember(d => d.id, mapFrom(s => s.rowKey)),
   // prettier-ignore
-  forMember(d => d.jobId, mapFrom(s => s.partitionKey)),
+  forMember(d => d.jobId, mapFrom(s => s.jobId?.value)),
   // prettier-ignore
   forMember(d => d.groupId, mapFrom(s => s.groupId?.value)),
   // prettier-ignore
@@ -58,6 +58,7 @@ createMap(
   extend(GmailJobRuleBase, GmailJobRuleBaseDTO),
   // prettier-ignore
   forMember(d => d.operator, mapFrom(s => s.operator)),
+  // prettier-ignore
   forMember(d => d.value, mapFrom(s => s.value))
 );
 
@@ -68,9 +69,9 @@ createMap(
   // prettier-ignore
   forMember(e => e.rowKey, mapFrom(d => d.id)),
   // prettier-ignore
-  forMember(e => e.partitionKey, mapFrom(s => s.jobId)),
+  forMember(e => e.jobId, mapFrom(d => ({ type: 'Guid', value: d.jobId  }))),
   // prettier-ignore
-  forMember(e => e.groupId, mapFrom(d => (d.groupId ? { type: 'Guid', value: d.groupId  } : undefined))),
+  forMember(e => e.groupId, mapFrom(d => (d.groupId ? { type: 'Guid', value: d.groupId } : undefined))),
   // prettier-ignore
   forMember(e => e.order, mapFrom(d => d.order)),
   // prettier-ignore

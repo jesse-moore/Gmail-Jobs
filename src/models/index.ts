@@ -46,6 +46,6 @@ export interface GoogleClientSecret {
 }
 
 export class TableEntityProperty<T> {
-  type: "String" | "Guid" | "Int32";
+  type: "String" | "Guid" | "Int32" | "Int64" | "Double" | "Boolean" | "DateTime";
   value: T;
 }

@@ -1,16 +1,16 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from '@azure/functions';
 import { GmailJobDTO } from '../dtos/GmailJobDTO';
 import { HTTPProtectedTrigger } from '../services/auth.service';
-import { JobFilterService } from '../services/jobFilter.service';
+import { GmailJobService } from '../services/gmailJob.service';
 
 export async function manageUserJobsTrigger(request: HttpRequest, context: InvocationContext, userId: string): Promise<HttpResponseInit> {
   switch (request.method) {
     case 'GET':
-      const jobDTOs = await JobFilterService.getJobsByUserId(userId);
+      const jobDTOs = await GmailJobService.getJobsByUserId(userId);
       return { status: 200, jsonBody: { jobDTOs } };
     case 'POST':
       const postBody = (await request.json()) as GmailJobDTO;
-      const postResult = await JobFilterService.createJob(userId, postBody);
+      const postResult = await GmailJobService.createJob(userId, postBody);
       if (postResult.error) {
         return { status: 400, body: postResult.error };
       }
@@ -18,7 +18,7 @@ export async function manageUserJobsTrigger(request: HttpRequest, context: Invoc
       return { status: 200, jsonBody: postResult.data };
     case 'PUT':
       const putBody = (await request.json()) as GmailJobDTO;
-      const putResult = await JobFilterService.updateJob(userId, putBody);
+      const putResult = await GmailJobService.updateJob(userId, putBody);
       if (putResult.error) {
         return { status: 400, body: putResult.error };
       }
@@ -30,7 +30,7 @@ export async function manageUserJobsTrigger(request: HttpRequest, context: Invoc
         return { status: 400, body: 'JobId is required' };
       }
 
-      const deleteResult = await JobFilterService.deleteJob(userId, jobId);
+      const deleteResult = await GmailJobService.deleteJob(userId, jobId);
       if (deleteResult.error) {
         return { status: 400, body: deleteResult.error };
       }
